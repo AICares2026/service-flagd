@@ -1,5 +1,5 @@
 service:
-  name: flagd
+  name: service-flagd
 image:
   repository: ghcr.io/open-feature/flagd
   tag: latest
