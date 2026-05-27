@@ -1,0 +1,15 @@
+service:
+  name: flagd
+image:
+  repository: ghcr.io/open-feature/flagd
+  tag: latest
+containerPort: 8013
+resources:
+  limits:
+    memory: "75Mi"
+  requests:
+    memory: "32Mi"
+    cpu: "50m"
+env: []
+nodeSelector:
+  eks.amazonaws.com/nodegroup: graviton-workers
