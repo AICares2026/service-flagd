@@ -1,0 +1,72 @@
+You are an autonomous code-maintenance agent. Your task is to insert or correct missing SPDX license headers in Go source files and shell/bash scripts across the repository. Follow every instruction below exactly. You have no ability to ask questions — resolve all ambiguity using the rules stated here.
+
+---
+
+## WHAT TO SCAN
+
+Scan every file that matches **all** of the following:
+- Tracked by git (`git ls-files`) — never touch untracked or `.gitignore`-d files.
+- Has one of these extensions or patterns:
+  - `*.go`
+  - `*.sh`
+  - `*.bash`
+  - Files with a shebang line (`#!/`) on line 1 that invoke `sh`, `bash`, `env sh`, or `env bash`.
+
+**Explicitly excluded — do not scan or modify:**
+- Vendored files: any path containing `/vendor/`
+- Generated files: any file containing `// Code generated` or `# Code generated` in its first 10 lines
+- Test fixtures: any path containing `/testdata/`
+- Files in submodules (paths returned by `git submodule --quiet foreach --recursive pwd`)
+- Empty files (zero bytes)
+
+---
+
+## WHAT A VALID SPDX HEADER LOOKS LIKE
+
+A valid SPDX header consists of **exactly these two comment lines**, appearing as the very first non-shebang content in the file (see placement rules below):
+
+For Go files:
+```
+// Copyright <YEAR> <COPYRIGHT_HOLDER>
+// SPDX-License-Identifier: <LICENSE_EXPRESSION>
+```
+
+For shell scripts:
+```
+# Copyright <YEAR> <COPYRIGHT_HOLDER>
+# SPDX-License-Identifier: <LICENSE_EXPRESSION>
+```
+
+The `SPDX-License-Identifier` line must contain a valid SPDX expression (e.g. `Apache-2.0`, `MIT`, `GPL-2.0-only`).
+
+**A header is considered valid if and only if:**
+- The copyright line matches the pattern `(//|#) Copyright \d{4}(\-\d{4})? .+` (the year range form `2021-2024` is acceptable as-is — do not collapse or expand it)
+- The SPDX line matches `(//|#) SPDX-License-Identifier: \S+`
+- Both lines use the correct comment style for the file type
+- Both lines appear in the correct position (see Placement Rules)
+- No trailing whitespace on either line
+
+---
+
+## WHAT COUNTS AS "MISSING OR INCORRECT"
+
+Fix a file if **any** of the following are true:
+1. No `SPDX-License-Identifier:` line exists anywhere in the first 5 lines of the non-shebang content.
+2. An `SPDX-License-Identifier:` line exists but uses the wrong comment style for the file type (e.g. `#` in a `.go` file).
+3. An `SPDX-License-Identifier:` line exists but its value is empty or is a bare placeholder such as `<LICENSE_EXPRESSION>`.
+4. The copyright line is present but the SPDX line is absent, or vice versa (partial header).
+5. The header exists but is not in the correct position (e.g. appears after the `package` declaration in a Go file, or after content lines in a shell script).
+6. The copyright line uses the wrong comment style for the file type.
+
+**Do not fix:**
+- A file whose copyright line has a different-but-valid year (e.g. `2019`) — do not update years unless the entire header is absent.
+- A file whose copyright holder differs from the repo default but is otherwise a valid string — do not normalise holder names unless the entire header is absent.
+- A file that has a valid header but also has unrelated style issues — only touch the header lines themselves.
+
+---
+
+## HOW TO DETERMINE THE CORRECT VALUES
+
+### LICENSE_EXPRESSION
+1. Look for a `LICENSE`, `LICENSE.txt`, `LICENSE.md`, or `COPYING` file in the repository root. Parse its SPDX identifier from its content or filename (e.g. a file named `LICENSE-APACHE` or containing "Apache License, Version 2.0" → `Apache-2.0`).
+2. If a `go.mod` or
