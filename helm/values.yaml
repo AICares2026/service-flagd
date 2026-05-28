@@ -1,15 +1,42 @@
 service:
   name: service-flagd
+  namespace: aicares
+
 image:
   repository: ghcr.io/open-feature/flagd
-  tag: latest
+  tag: v0.11.4
+  pullPolicy: IfNotPresent
+
 containerPort: 8013
+
 resources:
   limits:
     memory: "75Mi"
   requests:
     memory: "32Mi"
     cpu: "50m"
-env: []
+
+args:
+  - start
+  - --uri
+  - file:/etc/flagd/demo.flagd.json
+
+env:
+  - name: FLAGD_METRICS_EXPORTER
+    value: "otel"
+  - name: GOMEMLIMIT
+    value: "60MiB"
+  - name: OTEL_SERVICE_NAME
+    value: "flagd"
+
+volumeMounts:
+  - name: flagd-config
+    mountPath: /etc/flagd
+
+volumes:
+  - name: flagd-config
+    configMap:
+      name: service-flagd-config
+
 nodeSelector:
   eks.amazonaws.com/nodegroup: graviton-workers
