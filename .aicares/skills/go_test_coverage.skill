@@ -1,0 +1,93 @@
+You are an autonomous code-maintenance agent operating unsupervised. Your task is to scan a Go codebase, identify exported functions that lack test coverage, and generate basic table-driven test stubs for them. Follow every rule below exactly.
+
+---
+
+## WHAT TO LOOK FOR
+
+Scan all `.go` source files that are **not** themselves test files (i.e., files whose name does not end in `_test.go`).
+
+For each non-test `.go` file, collect every **exported function** — a function whose name begins with an uppercase letter and is declared at the package level with the `func` keyword (not a method on a type). Example patterns to match:
+
+```
+func Foo(...) ...
+func Bar(...) (...)
+```
+
+Do **not** collect:
+- Methods on types: `func (r Receiver) Foo(...)`
+- Methods on pointer types: `func (r *Receiver) Foo(...)`
+- Unexported functions: `func foo(...)`
+- Functions inside other functions (closures)
+- The `main` function in any `main` package
+
+For each exported function found, check whether a corresponding test already exists in any `*_test.go` file within the **same package directory**. A test is considered to exist for function `Foo` if any test file in that directory contains a function named exactly `TestFoo` (case-sensitive).
+
+A function is **untested** if no `TestFoo` function exists anywhere in the `*_test.go` files of the same directory.
+
+---
+
+## HOW TO GENERATE TEST STUBS
+
+For each untested exported function, generate a table-driven test stub and write it into the appropriate test file.
+
+### Determining the target test file
+
+- If a file named `<source_basename>_test.go` already exists in the same directory (e.g., `utils_test.go` for `utils.go`), append the new test function to that file.
+- If no such file exists, create it with the correct `package` declaration matching the source file's package name. Use the non-`_test` package name (i.e., `package foo`, not `package foo_test`).
+- If a single source file contains multiple untested exported functions, write all of their stubs into the same target test file in a single operation — do not open and write the file multiple times.
+
+### Test stub format
+
+Generate a stub of this exact structure, adapted to the function's signature:
+
+```go
+func TestFoo(t *testing.T) {
+    tests := []struct {
+        name string
+        // TODO: add input fields matching Foo's parameters
+        // TODO: add expected output fields matching Foo's return values
+    }{
+        {
+            name: "TODO: add test case",
+            // TODO: populate fields
+        },
+    }
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            // TODO: call Foo with tt inputs and assert against tt expected outputs
+        })
+    }
+}
+```
+
+Replace `Foo` with the actual function name. Do not attempt to infer or fill in field names, types, or assertions — leave all `TODO` comments exactly as shown. The stubs are scaffolding only; a human will complete them.
+
+### Imports
+
+If creating a new test file, include a `import "testing"` declaration. If appending to an existing test file that already imports `"testing"`, leave the import block entirely unchanged. If appending to an existing test file that does **not** import `"testing"` (e.g., it previously had no test functions and no import block), add `"testing"` to the import block before appending the stub. Never add duplicate imports.
+
+### New file structure
+
+When creating a new test file from scratch, use this exact layout:
+
+```go
+package <pkgname>
+
+import "testing"
+
+func TestFoo(t *testing.T) {
+    // ... stub as above
+}
+```
+
+---
+
+## WHAT TO LEAVE ALONE
+
+Do **not** modify or touch any of the following:
+
+- Any file outside a Go module (i.e., no `go.mod` exists at or above the directory) — skip these entirely.
+- Any file under a `vendor/` directory at any depth.
+- Any file under a `testdata/` directory at any depth.
+- Any file under a directory whose path contains `.git`.
+- Any generated file — identified by containing the comment `// Code generated

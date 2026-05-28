@@ -1,0 +1,69 @@
+You are an autonomous code-maintenance agent. Your task is to harden Dockerfiles in this codebase by applying three specific security improvements. Work carefully and systematically. You cannot ask questions, so follow these rules exactly.
+
+---
+
+## SCOPE: What Files to Process
+
+- Find every file named exactly `Dockerfile` or matching `Dockerfile.*` (e.g., `Dockerfile.prod`, `Dockerfile.dev`) in the repository.
+- Also find files with the `.dockerfile` extension.
+- Skip any file inside `vendor/`, `node_modules/`, `.git/`, or third-party directories you do not own.
+- Skip any file that contains the comment `# hardening-skip` anywhere in it — leave it completely untouched.
+
+---
+
+## IMPROVEMENT 1: Pin Base Image Digests
+
+### What to look for
+Any `FROM` line that references a base image by tag only (or with no tag), without a SHA-256 digest. Examples of problematic lines:
+```
+FROM ubuntu:22.04
+FROM node:18-alpine
+FROM python:3.11
+FROM debian:latest
+FROM scratch
+```
+
+Also match `FROM` lines that include `--platform`, `AS <name>`, or both:
+```
+FROM --platform=linux/arm64 node:18-alpine AS builder
+FROM python:3.11 AS base
+```
+
+### How to fix
+Replace the tag-only reference with the same tag plus the current SHA-256 digest, using the format `image:tag@sha256:...`.
+
+**Steps:**
+1. Parse the image name and tag from the `FROM` line. Preserve all other tokens (`--platform`, `AS <name>`) exactly as they appear — only the image reference itself changes.
+2. Use `docker buildx imagetools inspect <image:tag>` or `docker manifest inspect <image:tag>` to retrieve the current digest for that image on the `linux/amd64` platform (use `linux/amd64` as the default platform unless the `FROM` line contains a `--platform` flag specifying otherwise, in which case use that platform).
+3. Rewrite the line as `FROM image:tag@sha256:<digest>` (keep the original tag so human readers can still identify the image version). Preserve all other tokens in their original positions.
+4. If the `FROM` line already contains `@sha256:`, do not touch it.
+5. If the image is `scratch`, do not modify it — `scratch` has no digest.
+6. For multi-stage builds, apply this fix to every `FROM` line independently.
+7. If `docker manifest inspect` fails or returns no digest (e.g., network error, private registry not accessible), leave that specific `FROM` line unchanged and record it in your change summary as "skipped — digest unavailable".
+8. If the image reference uses a variable (e.g., `FROM $BASE_IMAGE` or `FROM ${BASE_IMAGE}`), leave it unchanged and record it in your change summary as "skipped — dynamic image reference".
+
+### Example transformations
+```dockerfile
+# Before
+FROM node:18-alpine
+FROM --platform=linux/arm64 node:18-alpine AS builder
+FROM python:3.11 AS base
+
+# After
+FROM node:18-alpine@sha256:a1b2c3d4e5f6...
+FROM --platform=linux/arm64 node:18-alpine@sha256:a1b2c3d4e5f6... AS builder
+FROM python:3.11@sha256:b2c3d4e5f6a7... AS base
+```
+
+---
+
+## IMPROVEMENT 2: Add Non-Root USER Directive
+
+### What to look for
+Any Dockerfile stage (including every stage in a multi-stage build) that does **not** contain a `USER` directive that sets a non-root user before the final `CMD`, `ENTRYPOINT`, or end of file. Specifically flag a stage when:
+- No `USER` directive exists anywhere in the stage, OR
+- The only `USER` directive(s) in the stage set `root` or `0` (e.g., `USER root`, `USER 0`, `USER 0:0`), OR
+- The last `USER` directive in the stage sets `root` or `0` (even if an earlier directive set a non-root user).
+
+Do **not** flag a stage when:
+- The last `USER` directive in the stage sets a non-root, non-zero user — even

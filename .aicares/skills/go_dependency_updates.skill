@@ -1,0 +1,80 @@
+## Skill: Update Outdated Go Module Dependencies
+
+### Objective
+Scan the repository for Go modules with outdated dependencies and update them to their latest compatible versions using `go get` and `go mod tidy`, then commit the changes.
+
+---
+
+### What to Look For
+
+Identify every directory in the repository that contains **both** a `go.mod` file and a `go.sum` file. Each such directory is a Go module root and must be processed independently.
+
+**Excluded directories (skip silently and log a notice):**
+- Any path containing a `vendor/` component (e.g., `vendor/`, `foo/vendor/`)
+- Any path containing a `testdata/` component
+- Any directory whose `go.mod` declares `go 1.11` or earlier
+- Any directory that contains a `go.mod` but no `go.sum`
+
+For each qualifying module root, detect outdated direct and indirect dependencies by running:
+```
+go list -u -m -json all
+```
+A dependency is considered outdated if its `Update` field is non-nil in the JSON output, meaning a newer version exists that satisfies the module's declared Go version and semver constraints.
+
+**Skip a dependency (leave it unchanged) if any of the following apply:**
+- It is covered by a `replace` directive in `go.mod` (local path or fork replacement)
+- It is pinned to a pseudo-version (e.g., `v0.0.0-20230101000000-abcdefabcdef`) — pseudo-versions typically track unreleased commits and must not be silently upgraded
+- Its current major version would need to change to reach `@latest` (e.g., currently `v1.x`, latest is `v2.x`) — upgrading across major versions requires import path changes in source code, which is out of scope
+- It appears under a `retract` directive in `go.mod`
+
+Log a notice for each skipped dependency, naming the module path and the reason.
+
+---
+
+### Preconditions Check (Perform Before Any Changes)
+
+Before making any changes in a module root:
+
+1. Confirm you are on a branch where commits are permitted. If the working tree is on a detached HEAD or a protected branch, skip this module and log a warning.
+2. Confirm the working tree for this module root is clean (no uncommitted changes to `go.mod`, `go.sum`, or any other tracked file). If it is not clean, skip this module and log a warning — do not attempt updates on a dirty working tree.
+3. Confirm `go` is available in `PATH` and its version is compatible with the `go` directive in `go.mod`. If `go version` returns a version older than the one declared in `go.mod`, skip this module and log a warning.
+
+---
+
+### How to Fix
+
+Process each module root independently and sequentially. Do not run concurrent updates across module roots. Do not mix changes across module roots.
+
+**Step 1 — Capture baseline.**
+Run the existing test suite to establish a passing baseline:
+```
+go test ./...
+```
+If this command fails before any changes are made, **skip this module entirely** and log a warning. Do not attempt updates on a module whose tests are already broken.
+
+Also record the current contents of `go.mod` and `go.sum` so they can be restored exactly if needed:
+```
+cp go.mod go.mod.bak
+cp go.sum go.sum.bak
+```
+
+**Step 2 — Update dependencies.**
+For each outdated dependency identified (excluding those in the skip list above), run:
+```
+go get <module-path>@latest
+```
+`@latest` resolves to the highest released version that does not introduce a major version bump relative to the currently declared version. Process direct dependencies first, then indirect ones.
+
+If a `go get` command fails for a specific dependency (e.g., network error, checksum mismatch, build constraint incompatibility), skip that individual dependency, log the error with the full command output, and continue processing remaining dependencies. Do not abort the entire module update on a single `go get` failure.
+
+**Step 3 — Tidy the module.**
+After all `go get` commands complete, run:
+```
+go mod tidy
+```
+This removes unused dependencies and ensures `go.sum` is consistent.
+
+If `go mod tidy` fails, revert immediately (see Step 5) and log the full error output.
+
+**Step 4 — Validate.**
+Run the test
