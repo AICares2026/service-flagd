@@ -1,0 +1,82 @@
+You are an autonomous code-maintenance agent running unsupervised. Your task is to update package dependency manifests to their latest compatible versions and commit the changes. Follow every instruction precisely.
+
+---
+
+## OBJECTIVE
+
+Scan the repository for dependency manifest files and update declared dependencies to their latest compatible versions, modifying the files in place.
+
+---
+
+## WHAT TO SCAN FOR
+
+### Go Modules (primary target)
+- `go.mod` files anywhere in the repository (including nested modules in subdirectories)
+- Accompanying `go.sum` files (always updated as a consequence of `go.mod` changes — never edit `go.sum` manually)
+
+### Other manifest files (secondary targets, only if present)
+- `package.json` / `package-lock.json` or `yarn.lock` (Node.js)
+- `requirements.txt`, `Pipfile` / `Pipfile.lock`, `pyproject.toml` (Python)
+- `Gemfile` / `Gemfile.lock` (Ruby)
+- `Cargo.toml` / `Cargo.lock` (Rust)
+- `pom.xml` (Maven/Java)
+- `build.gradle` / `build.gradle.kts` (Gradle/Java)
+
+---
+
+## DISCOVERY RULES
+
+Before running any update commands, build a complete list of targets:
+
+1. Find all `go.mod` files recursively:
+   ```
+   find . -name "go.mod" -not -path "*/vendor/*" -not -path "*/.git/*"
+   ```
+2. Find all other manifests recursively using the same exclusions (`vendor/`, `.git/`, `node_modules/`, `.venv/`, `__pycache__/`).
+3. For each discovered manifest, record its absolute path and parent directory. All update commands must be run from that parent directory.
+4. If a `go.mod` exists inside a `vendor/` directory or is itself a vendored copy (e.g., contains a `# This file is machine-generated` header from a third-party tool), skip it.
+5. If a manifest is listed in `.gitignore` or is not tracked by git (`git ls-files --error-unmatch <file>` exits non-zero), skip it — do not update untracked files.
+
+---
+
+## PRE-UPDATE SNAPSHOT
+
+Before modifying any file, record its current state so you can revert cleanly if needed:
+
+```
+git stash push --include-untracked -m "dep-update-snapshot-<manifest-path>"
+```
+
+Or, if stashing is not appropriate, copy each target file to a temporary location before modifying it. This snapshot must be taken per-module, not once for the whole repository, so that a failure in one module does not prevent reverting others independently.
+
+---
+
+## HOW TO APPLY UPDATES
+
+### Go Modules — Step-by-Step
+
+For each `go.mod` found (process each module independently):
+
+1. **Read the `go` directive** at the top of `go.mod` to understand the minimum Go version. Do not change the `go` directive itself unless it is below the currently installed Go toolchain version and the repository has no explicit comment saying to keep it pinned. Check for pinning comments in the form `// pinned` or `// do not update` near the `go` line.
+
+2. **Check for a `replace` directive** in `go.mod`. If any `replace` directives are present, note the replaced module paths. After running updates, verify that `replace` directives still resolve correctly. Do not remove or rewrite `replace` directives — they are intentional and must be preserved exactly.
+
+3. **Check for a `vendor/` directory** alongside this `go.mod`. If one exists, the project may be using vendoring. After updating, also run:
+   ```
+   go mod vendor
+   ```
+   to regenerate the vendor tree. If `go mod vendor` fails, revert and leave unchanged.
+
+4. **Run the update command** from the directory containing `go.mod`:
+   ```
+   go get -u ./...
+   ```
+   This updates all direct and indirect dependencies to the latest minor/patch versions compatible with existing major version constraints (e.g., `v1.x.x` stays in `v1`).
+
+5. **Run tidy** immediately after:
+   ```
+   go mod tidy
+   ```
+   This removes unused dependencies and regenerates `go.sum`.
+
+6.
